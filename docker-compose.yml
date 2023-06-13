@@ -1,0 +1,92 @@
+version: "3.8"
+services:
+
+  # Redis
+  redis:
+    image: redis:alpine
+    container_name: redis
+
+  # Database Postgres
+  database:
+    image: postgres:15.3-alpine3.18
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    container_name: postgres
+
+  # Django Application
+  app:
+    build: .
+    volumes:
+      - .:/service
+    environment:
+      - DB_HOST=database
+      - DB_NAME=postgres
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - LOGSTASH_HOST=logstash
+    ports:
+      - 8000:8000
+    container_name: app
+    command: python manage.py runserver 0.0.0.0:8000
+    depends_on:
+      - database 
+      - elasticsearch
+      - kibana
+      - logstash
+    logging:
+      driver: "json-file"
+      
+  # Celery
+  celery:
+    restart: always
+    build:
+      context: .
+    command: celery -A core worker -l DEBUG
+    volumes:
+      - .:/service
+    container_name: celery
+    depends_on:
+      - database
+      - redis
+      - app
+
+  # Elasticsearch
+  elasticsearch:
+    image: elasticsearch:8.7.1
+    environment:
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports: 
+      - "9300:9300"
+      - "9200:9200"
+    container_name: elasticsearch
+
+  # Logstash
+  logstash:
+    image: logstash:8.7.1
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/config/logstash.conf
+      - ./logstash.conf:/usr/share/logstash/logstash.conf
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    command: logstash -f logstash.conf
+    depends_on:
+      - elasticsearch
+    ports:
+      - "5959:5959"
+      - "9600:9600"
+    container_name: logstash
+
+  # Kibana
+  kibana:
+    image: kibana:8.7.1
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    container_name: kibana
